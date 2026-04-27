@@ -1,18 +1,37 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { User } from 'src/users/entities/users.entity';
 import { Repository } from 'typeorm';
-import { Notification } from '../entities/notification.entity';
+import {
+  Notification,
+  NotificationChannels,
+} from '../entities/notification.entity';
 import { CreateNotificationDto } from '../dtos/create-notification.dto';
 import { UsersService } from 'src/users/services/users.service';
 import { UpdateNotificationDto } from '../dtos/update-notification.dto';
 import { InjectRepository } from '@nestjs/typeorm';
+import { EmailChannel } from '../channels/email.channel';
+import { SmsChannel } from '../channels/sms.channel';
+import { PushChannel } from '../channels/push.channel';
+import { INotificationChannel } from '../channels/notifications-channel.interface';
 @Injectable()
 export class NotificationsService {
+  private readonly channels: Record<NotificationChannels, INotificationChannel>;
+
   constructor(
     @InjectRepository(Notification)
     private readonly notificationsRepository: Repository<Notification>,
     private readonly userService: UsersService,
-  ) {}
+
+    private readonly emailChannel: EmailChannel,
+    private readonly smsChannel: SmsChannel,
+    private readonly pushChannel: PushChannel,
+  ) {
+    this.channels = {
+      [NotificationChannels.EMAIL]: this.emailChannel,
+      [NotificationChannels.SMS]: this.smsChannel,
+      [NotificationChannels.PUSH]: this.pushChannel,
+    };
+  }
 
   async findAllByUser(userId: User['id']): Promise<Notification[]> {
     return await this.notificationsRepository.findBy({ userId });
@@ -42,6 +61,9 @@ export class NotificationsService {
       userId,
     });
 
+    this.sendNotification(notification).catch((error) => {
+      console.error('Failed to send notification:', error);
+    });
     return await this.notificationsRepository.save(notification);
   }
 
@@ -61,5 +83,13 @@ export class NotificationsService {
   ): Promise<void> {
     const notification = await this.findOne(userId, notificationId);
     await this.notificationsRepository.delete(notification);
+  }
+
+  async sendNotification(notification: Notification) {
+    const channel = this.channels[notification.channel];
+    if (!channel) {
+      throw new Error(`Channel not found for type: ${notification.channel}`);
+    }
+    await channel.send(notification.content);
   }
 }
